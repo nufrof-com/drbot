@@ -1,0 +1,40 @@
+[tool.poetry]
+name = "partybot"
+version = "0.1.0"
+description = "A chatbot for party platform questions using RAG with local LLMs"
+authors = ["Your Name <you@example.com>"]
+readme = "README.md"
+packages = [{include = "app"}]
+
+[tool.poetry.dependencies]
+python = "^3.11"
+fastapi = "^0.104.1"
+uvicorn = {extras = ["standard"], version = "^0.24.0"}
+langchain = "^0.1.0"
+langchain-community = "^0.0.10"
+chromadb = "^0.4.18"
+requests = "^2.31.0"
+beautifulsoup4 = "^4.12.0"
+python-dotenv = "^1.0.0"
+pydantic = "^2.5.0"
+pydantic-settings = "^2.1.0"
+
+[tool.poetry.group.dev.dependencies]
+pytest = "^7.4.0"
+black = "^23.11.0"
+ruff = "^0.1.6"
+
+[tool.poetry.scripts]
+partybot = "app.main:app"
+
+[build-system]
+requires = ["poetry-core"]
+build-backend = "poetry.core.masonry.api"
+
+[tool.black]
+line-length = 100
+target-version = ['py311']
+
+[tool.ruff]
+line-length = 100
+target-version = "py311"
