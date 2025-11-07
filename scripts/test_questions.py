@@ -55,24 +55,97 @@ def main():
     # Test questions from command line or use defaults
     if len(sys.argv) > 1:
         questions = [" ".join(sys.argv[1:])]
+        test_results = []
     else:
-        # Default test questions
-        questions = [
-            "Would the party lower minimum wage?",
-            "What is the party's position on healthcare?",
-            "Tell me about the history of the party",
-            "How does the platform differ from the historical platform?",
+        # Default test questions covering various scenarios
+        test_cases = [
+            # (question, expected_type, description)
+            ("Would the party lower minimum wage?", "platform", "Negative question - should state party supports raising it"),
+            ("Would the party decrease minimum wage?", "platform", "Negative question - should state party supports raising it"),
+            ("Does the party oppose universal healthcare?", "platform", "Negative question - should state party supports it"),
+            
+            # General platform questions
+            ("What is the party's position on healthcare?", "platform", "General platform question"),
+            ("Tell me about the party", "platform", "General question - should default to platform"),
+            ("What are the party's views on climate change?", "platform", "Platform policy question"),
+            
+            # History/origin questions (should use Wikipedia document)
+            ("Where did the party come from?", "history", "Origin question - should use history docs"),
+            ("Where was the party founded?", "history", "Location question - should provide location, not just dates"),
+            ("Tell me about the history of the party", "history", "History question"),
+            ("When was the party founded?", "history", "Founding date question"),
+            ("Who founded the Democratic-Republican Party?", "history", "Founder question"),
+            ("Now when, where", "history", "Follow-up asking for both time and location"),
+            
+            # Comparative questions (should use both documents)
+            ("How does the platform differ from the historical platform?", "both", "Comparative question - needs both docs"),
+            ("Compare the historical and modern party positions", "both", "Comparison question"),
+            ("What changed between the historical party and today?", "both", "Change question"),
+            ("What has changed since the original party was revived?", "both", "Revival question - should compare historical vs modern"),
         ]
-        print("Using default test questions. Provide a question as argument to test it.")
+        
+        questions = [q[0] for q in test_cases]
+        test_results = test_cases
+        
+        print("Using default test questions covering:")
+        print("  - Negative questions (lower/decrease/oppose)")
+        print("  - General platform questions")
+        print("  - History/origin questions")
+        print("  - Comparative questions")
+        print("\nProvide a question as argument to test it.")
         print("Example: poetry run python scripts/test_questions.py 'Your question here'\n")
     
-    for question in questions:
+    results_summary = []
+    
+    for i, question in enumerate(questions):
         try:
+            # Get expected type if we have test cases
+            expected_type = None
+            description = None
+            if test_results:
+                expected_type = test_results[i][1]
+                description = test_results[i][2]
+            
             test_question(question)
+            
+            # Check classification if we have expected type
+            if expected_type:
+                actual_type = rag_system._classify_question(question)
+                status = "✅" if actual_type == expected_type else "❌"
+                results_summary.append({
+                    "question": question,
+                    "expected": expected_type,
+                    "actual": actual_type,
+                    "status": status,
+                    "description": description
+                })
         except Exception as e:
             print(f"\n❌ ERROR: {e}")
             import traceback
             traceback.print_exc()
+            if test_results:
+                results_summary.append({
+                    "question": question,
+                    "expected": test_results[i][1] if i < len(test_results) else "unknown",
+                    "actual": "ERROR",
+                    "status": "❌",
+                    "description": test_results[i][2] if i < len(test_results) else ""
+                })
+    
+    # Print summary if we ran test cases
+    if results_summary:
+        print("\n" + "="*80)
+        print("📊 TEST SUMMARY")
+        print("="*80)
+        for result in results_summary:
+            print(f"\n{result['status']} {result['question']}")
+            print(f"   Expected: {result['expected']}, Got: {result['actual']}")
+            if result['description']:
+                print(f"   {result['description']}")
+        
+        passed = sum(1 for r in results_summary if r['status'] == "✅")
+        total = len(results_summary)
+        print(f"\n📈 Results: {passed}/{total} classifications correct")
     
     print("\n" + "="*80)
     print("✅ Testing complete!")

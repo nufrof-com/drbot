@@ -158,10 +158,39 @@ class RAGSystem:
         """
         query_lower = query.lower()
         
-        # History keywords
+        # History keywords - check for origin/founding questions first
+        origin_phrases = [
+            'where did', 'where was', 'where came', 'come from', 'came from',
+            'where originate', 'where start', 'where begin', 'where founded',
+            'where established', 'where created', 'where formed'
+        ]
+        
+        # Check for "where" questions about founding/origin (definitely history)
+        if any(phrase in query_lower for phrase in origin_phrases):
+            return "history"
+        
+        # Check for "when" questions about founding (definitely history)
+        when_founding_phrases = [
+            'when was', 'when did', 'when started', 'when began',
+            'when founded', 'when established', 'when created', 'when formed'
+        ]
+        if any(phrase in query_lower for phrase in when_founding_phrases):
+            return "history"
+        
+        # Check for "now when, where" or similar follow-ups asking for both time and place
+        # These are typically asking for historical founding details
+        if 'now when' in query_lower or ('when' in query_lower and 'where' in query_lower):
+            return "history"
+        
+        # Standalone "where" questions are likely asking about location/origin (history)
+        if query_lower.strip() == 'where' or query_lower.startswith('where'):
+            # Check if it's asking about the party (implicit from context)
+            if 'party' in query_lower or len(query_lower.split()) <= 3:
+                return "history"
+        
         history_keywords = [
             'history', 'historical', 'founded', 'founding', 'origins', 'origin',
-            'when was', 'when did', 'established', 'early', 'past', 'former',
+            'established', 'early', 'past', 'former', 'began', 'started',
             'jefferson', 'madison', 'monroe', '1792', '1800', '1824', '1820s',
             'antebellum', 'federalist', 'era', 'period', 'century', 'decade',
             'original party', 'old party', 'early party'
@@ -172,7 +201,13 @@ class RAGSystem:
             'platform', 'policy', 'policies', 'position', 'positions', 'stance',
             'stance on', 'view on', 'views on', 'support', 'oppose', 'advocate',
             'believe', 'current', 'today', 'modern', 'now', 'present', 'contemporary',
-            'current party', 'modern party', 'revived party', 'today\'s party'
+            'current party', 'modern party', 'today\'s party'
+        ]
+        
+        # Revival keywords - indicate modern revival, should trigger "both" for comparison
+        revival_keywords = [
+            'revived', 'revival', 'revive', 'bringing back', 'restart', 'restarted',
+            'reestablish', 'reestablishing', 'reformed', 'reform'
         ]
         
         # Comparative keywords (indicate need for both)
@@ -184,12 +219,20 @@ class RAGSystem:
             'modern vs', 'modern versus', 'old vs', 'old versus'
         ]
         
+        # Check for revival keywords (modern revival of historical party)
+        has_revival = any(keyword in query_lower for keyword in revival_keywords)
+        
         # Check for comparative questions
         has_comparative = any(keyword in query_lower for keyword in comparative_keywords)
         
         # Count matches
         history_score = sum(1 for keyword in history_keywords if keyword in query_lower)
         platform_score = sum(1 for keyword in platform_keywords if keyword in query_lower)
+        
+        # If revival keywords are present, it's asking about modern revival vs historical
+        # This needs both documents to compare
+        if has_revival:
+            return "both"
         
         # If comparative keywords are present, return "both" (needs both document types)
         # This handles questions like "how does X differ", "compare X and Y", "what changed"
@@ -198,7 +241,7 @@ class RAGSystem:
         
         # Also check for explicit mentions of both historical and modern/current
         has_historical_mention = history_score > 0
-        has_modern_mention = any(word in query_lower for word in ['modern', 'current', 'now', 'today', 'present', 'revived'])
+        has_modern_mention = any(word in query_lower for word in ['modern', 'current', 'now', 'today', 'present'])
         
         if has_historical_mention and has_modern_mention:
             return "both"
@@ -327,40 +370,93 @@ class RAGSystem:
             except:
                 return [], "platform"
     
+    def _clean_response(self, response: str) -> str:
+        """
+        Clean up the response to remove formatting markers and meta-commentary.
+        """
+        # Remove common formatting markers
+        response = response.replace("**Answer:**", "")
+        response = response.replace("**Answer**:", "")
+        response = response.replace("Answer:", "")
+        response = response.replace("Answer :", "")
+        
+        # Remove markdown bold markers that might be at the end
+        response = response.replace("**", "")
+        
+        # Remove meta-commentary patterns (only if the line is primarily meta-commentary)
+        lines = response.split('\n')
+        cleaned_lines = []
+        skip_patterns = [
+            "however, the passage does not",
+            "leaving this answer as inferred",
+            "inferred from the context",
+            "the passage does not explicitly",
+        ]
+        
+        for line in lines:
+            line_lower = line.lower().strip()
+            # Only skip lines that are clearly just meta-commentary
+            # (contain these patterns and are short/not substantive)
+            is_meta = any(pattern in line_lower for pattern in skip_patterns)
+            if is_meta and len(line.strip()) < 150:
+                continue
+            cleaned_lines.append(line)
+        
+        response = '\n'.join(cleaned_lines).strip()
+        
+        # Remove trailing periods and extra whitespace
+        response = response.rstrip('. ')
+        
+        return response
+    
     def generate_response(self, query: str, context: List[str], doc_type: str) -> str:
         """Generate a response using Ollama LLM."""
         # Construct prompt based on document type
         context_text = "\n\n".join(context) if context else ""
         
         if doc_type == "history":
-            prompt = f"""Based on the following information about the historical Democratic-Republican Party (1792-1824), answer the question.
+            # Check if question is asking about location
+            query_lower = query.lower()
+            is_location_question = any(word in query_lower for word in ['where', 'location', 'place', 'city', 'state', 'region'])
+            is_time_question = any(word in query_lower for word in ['when', 'date', 'year', 'time'])
+            
+            location_instruction = ""
+            if is_location_question:
+                location_instruction = " If the question asks 'where', provide the geographical location (city, state, or region), not just dates."
+            if is_time_question and is_location_question:
+                location_instruction = " If the question asks for both 'when' and 'where', provide both the date/time and the geographical location."
+            
+            prompt = f"""Answer this question about the historical Democratic-Republican Party (1792-1824) using the information below.
 
 {context_text}
 
 Question: {query}
 
-Answer:"""
+Provide a clear, direct answer based on the information above.{location_instruction} Do not include formatting markers, labels, or meta-commentary. Just answer the question."""
         elif doc_type == "both":
-            prompt = f"""Compare the historical Democratic-Republican Party (1792-1824) and the modern {settings.party_name} party based on the following information.
+            prompt = f"""The {settings.party_name} is a modern revival of the historical Democratic-Republican Party (1792-1824). 
+Compare the historical party and the modern revived party using the information below.
 
 {context_text}
 
 Question: {query}
 
-Answer:"""
+Provide a clear comparison between the historical Democratic-Republican Party (1792-1824) and the modern {settings.party_name} party. 
+If the question asks about what changed since the party was revived, compare the historical positions with the modern platform.
+Do not include formatting markers or meta-commentary. Just answer the question."""
         else:  # platform
             # Check if we have context - if not, the retrieval failed
             if not context_text or len(context_text.strip()) < 50:
                 return f"I apologize, but I couldn't find relevant information in the party's platform documents to answer your question. Please try rephrasing your question or ask about a different topic."
             
             # Simple, direct prompt - let the model answer naturally
-            prompt = f"""Based on the following information about the {settings.party_name}'s platform, answer the question.
+            prompt = f"""Answer this question about the {settings.party_name}'s platform using the information below.
 
 {context_text}
 
 Question: {query}
 
-Answer:"""
+Provide a clear, direct answer. Do not include formatting markers, labels like "Answer:", or meta-commentary. Just answer the question naturally."""
         
         try:
             response = requests.post(
@@ -375,7 +471,10 @@ Answer:"""
             
             if response.status_code == 200:
                 result = response.json()
-                return result.get("response", "I apologize, but I couldn't generate a response.")
+                raw_response = result.get("response", "I apologize, but I couldn't generate a response.")
+                # Clean up the response
+                cleaned_response = self._clean_response(raw_response)
+                return cleaned_response
             else:
                 return f"Error: Could not generate response (status {response.status_code})"
         except Exception as e:

@@ -24,8 +24,8 @@ A Python-based chatbot that answers questions about a political party's official
 ### Prerequisites
 
 - **Python 3.11+** (managed via pyenv)
-- **Poetry** for dependency management
-- **Ollama** for running local LLMs
+- **Poetry** for dependency management  
+- **Ollama** for running local LLMs (install from https://ollama.ai)
 - (Optional) Docker and Docker Compose for containerized deployment
 
 ### Development Setup (Recommended)
@@ -104,7 +104,13 @@ A Python-based chatbot that answers questions about a political party's official
 
 11. **Access the application**:
     - Open http://localhost:8000 in your browser
-    - The first startup may take a few minutes as it processes documents
+    - The first startup may take a few minutes as it processes documents and creates embeddings
+
+12. **Test the system** (optional):
+    ```bash
+    # Run test questions to verify everything works
+    poetry run python scripts/test_questions.py
+    ```
 
 ### Using Docker Compose (Alternative)
 
@@ -176,6 +182,27 @@ Processes a chat question.
 ### `GET /health`
 Health check endpoint.
 
+### `POST /chat/debug`
+Debug endpoint that returns detailed information about the RAG process.
+
+**Request**:
+```json
+{
+  "question": "Would the party lower minimum wage?"
+}
+```
+
+**Response**:
+```json
+{
+  "question": "Would the party lower minimum wage?",
+  "classification": "platform",
+  "context_chunks": 5,
+  "context_preview": ["...", "..."],
+  "answer": "The Democratic Republicans would not lower minimum wage..."
+}
+```
+
 ## Deployment
 
 ### Render
@@ -236,9 +263,12 @@ Health check endpoint.
    - Returns answer to user
 
 3. **Document Routing**:
-   - **History questions** (keywords: history, founded, Jefferson, 1792, etc.) → Uses `democratic_republicans_wikipedia.txt`
+   - **History questions** (keywords: history, founded, where, when, Jefferson, 1792, etc.) → Uses `democratic_republicans_wikipedia.txt`
    - **Platform questions** (keywords: platform, policy, position, current, etc.) → Uses `platform.txt`
+   - **Comparative questions** (keywords: differ, compare, changed, revived, etc.) → Uses both documents
    - Defaults to platform if unclear
+   
+   **Note**: The modern Democratic Republicans is a revival of the historical party. Questions about "revived" or "revival" will compare historical vs modern positions.
 
 4. **Out-of-Scope Handling**:
    - History questions: "I'm only able to discuss the historical Democratic-Republican Party (1792-1824)."
@@ -257,7 +287,8 @@ Health check endpoint.
 
 ### ChromaDB errors
 - Ensure write permissions for `data/chroma_db/`
-- Try deleting `chroma_db/` and restarting
+- Try deleting `chroma_db/` and restarting to rebuild the vector database
+- If you add new documents, delete `data/chroma_db/` to force a rebuild
 
 ### Poetry/pyenv issues
 - Ensure pyenv is properly initialized in your shell: `eval "$(pyenv init -)"`
@@ -316,7 +347,96 @@ This will:
 
 To scrape a different Wikipedia page, edit `scripts/scrape_wikipedia.py` and change the `page_title` variable.
 
-**Note**: After adding new documents, restart the application to rebuild the vector database.
+**Note**: After adding new documents, you may need to delete `data/chroma_db/` and restart the application to rebuild the vector database.
+
+### Testing and Debugging
+
+#### Test Questions Script
+
+Run comprehensive tests to verify the RAG system is working correctly:
+
+```bash
+# Run all test questions
+poetry run python scripts/test_questions.py
+
+# Test a specific question
+poetry run python scripts/test_questions.py "Where was the party founded?"
+```
+
+The script will:
+- Test various question types (negative, history, platform, comparative)
+- Show classification results
+- Display retrieved context chunks
+- Show generated answers
+- Provide a summary of classification accuracy
+
+#### Debug API Endpoint
+
+For detailed debugging information, use the `/chat/debug` endpoint:
+
+```bash
+curl -X POST http://localhost:8000/chat/debug \
+  -H "Content-Type: application/json" \
+  -d '{"question": "Would the party lower minimum wage?"}'
+```
+
+This returns:
+- Question classification
+- Retrieved context chunks
+- Number of chunks
+- Full answer
+- Context previews
+
+## Quick Reference
+
+### Starting the Application
+
+```bash
+# 1. Ensure Ollama is running (usually runs automatically on macOS)
+curl http://localhost:11434/api/tags  # Verify it's running
+
+# 2. Start the application
+poetry run python -m app.main
+
+# 3. Open browser
+# http://localhost:8000
+```
+
+### Rebuilding the Vector Database
+
+If you add new documents or want to rebuild:
+
+```bash
+# Delete the old database
+rm -rf data/chroma_db/
+
+# Restart the application (it will rebuild automatically)
+poetry run python -m app.main
+```
+
+### File Structure
+
+- `data/platform.txt` - Modern party platform (used for current policy questions)
+- `data/democratic_republicans_wikipedia.txt` - Historical party info (used for history questions)
+- `data/chroma_db/` - Vector database (auto-generated, can be deleted to rebuild)
+
+### Common Commands
+
+```bash
+# Test questions
+poetry run python scripts/test_questions.py
+
+# Scrape Wikipedia
+poetry run python scripts/scrape_wikipedia.py
+
+# Check health
+curl http://localhost:8000/health
+
+# Debug a question
+curl -X POST http://localhost:8000/chat/debug \
+  -H "Content-Type: application/json" \
+  -d '{"question": "Your question here"}'
+```
 
 ## License
 
