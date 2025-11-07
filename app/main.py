@@ -69,6 +69,38 @@ async def chat(request: ChatRequest):
         raise HTTPException(status_code=500, detail=f"Error processing question: {str(e)}")
 
 
+@app.post("/chat/debug")
+async def chat_debug(request: ChatRequest):
+    """Debug endpoint that returns detailed information about the RAG process."""
+    if not request.question or not request.question.strip():
+        raise HTTPException(status_code=400, detail="Question cannot be empty")
+    
+    try:
+        question = request.question.strip()
+        
+        # Get detailed information
+        doc_type = rag_system._classify_question(question)
+        context, retrieved_doc_type = rag_system.retrieve_context(question)
+        
+        # Generate response
+        answer = rag_system.generate_response(question, context, retrieved_doc_type)
+        
+        return {
+            "question": question,
+            "classified_as": doc_type,
+            "retrieved_doc_type": retrieved_doc_type,
+            "context_chunks": context,
+            "num_chunks": len(context),
+            "answer": answer,
+            "context_preview": [chunk[:200] + "..." if len(chunk) > 200 else chunk for chunk in context[:3]]
+        }
+    except Exception as e:
+        return {
+            "error": str(e),
+            "question": request.question
+        }
+
+
 @app.get("/health")
 async def health():
     """Health check endpoint."""

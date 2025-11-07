@@ -18,10 +18,13 @@ class RAGSystem:
             model=settings.ollama_embedding_model,
             base_url=settings.ollama_base_url
         )
+        # Use smaller chunks for small documents, larger for big ones
+        # This will be adjusted per document in the splitting process
         self.text_splitter = RecursiveCharacterTextSplitter(
-            chunk_size=1000,
+            chunk_size=2000,
             chunk_overlap=200,
             length_function=len,
+            separators=["\n\n", "\n", ". ", " ", ""]  # Better separators
         )
         self.vectorstore: Optional[Chroma] = None
         
@@ -65,8 +68,26 @@ class RAGSystem:
         print(f"Processing {len(documents)} documents...")
         chunks = []
         for doc in documents:
-            doc_chunks = self.text_splitter.split_documents([doc])
-            chunks.extend(doc_chunks)
+            # Adjust chunk size based on document length
+            doc_length = len(doc.page_content)
+            if doc_length < 2000:
+                # Small documents: keep as single chunk or minimal splitting
+                if doc_length < 1000:
+                    # Very small - keep as one chunk
+                    chunks.append(doc)
+                else:
+                    # Small but might need splitting - use smaller chunks
+                    splitter = RecursiveCharacterTextSplitter(
+                        chunk_size=doc_length + 100,  # Slightly larger than doc
+                        chunk_overlap=0,
+                        length_function=len,
+                    )
+                    doc_chunks = splitter.split_documents([doc])
+                    chunks.extend(doc_chunks)
+            else:
+                # Large documents: use normal splitting
+                doc_chunks = self.text_splitter.split_documents([doc])
+                chunks.extend(doc_chunks)
         print(f"Created {len(chunks)} text chunks")
         
         # Create vector store
@@ -189,7 +210,38 @@ class RAGSystem:
         # Default to platform for current party questions
         return "platform"
     
-    def retrieve_context(self, query: str, top_k: int = 3) -> Tuple[List[str], str]:
+    def _expand_query(self, query: str) -> str:
+        """
+        Expand query with synonyms and related terms to improve retrieval.
+        
+        For questions about decreasing/lowering something, also search for
+        the positive form to find what the party actually supports.
+        """
+        query_lower = query.lower()
+        
+        # Map negative terms to positive synonyms for better retrieval
+        synonym_map = {
+            'lower': ['wage', 'minimum wage', 'raise', 'increase'],
+            'decrease': ['wage', 'minimum wage', 'raise', 'increase'],
+            'reduce': ['wage', 'minimum wage', 'raise', 'increase'],
+            'cut': ['wage', 'minimum wage', 'raise', 'increase'],
+        }
+        
+        # If query contains negative action words, add positive terms
+        expanded_terms = [query]
+        for negative_term, related_terms in synonym_map.items():
+            if negative_term in query_lower:
+                for term in related_terms:
+                    if term in query_lower:
+                        # Add the positive form
+                        expanded_terms.append(f"raise {term}")
+                        expanded_terms.append(f"increase {term}")
+                        expanded_terms.append(f"support {term}")
+        
+        # Combine original query with expanded terms
+        return " ".join(expanded_terms)
+    
+    def retrieve_context(self, query: str, top_k: int = 5) -> Tuple[List[str], str]:
         """
         Retrieve relevant context chunks for a query, filtered by document type.
         
@@ -203,16 +255,19 @@ class RAGSystem:
             # Classify the question
             doc_type = self._classify_question(query)
             
+            # Expand query for better retrieval
+            expanded_query = self._expand_query(query)
+            
             # If question needs both types, retrieve from both
             if doc_type == "both":
                 # Get context from both document types
                 history_results = self.vectorstore.similarity_search(
-                    query,
+                    expanded_query,
                     k=top_k,
                     filter={"doc_type": "history"}
                 )
                 platform_results = self.vectorstore.similarity_search(
-                    query,
+                    expanded_query,
                     k=top_k,
                     filter={"doc_type": "platform"}
                 )
@@ -226,7 +281,7 @@ class RAGSystem:
             
             # Retrieve with metadata filter for single type
             results = self.vectorstore.similarity_search(
-                query,
+                expanded_query,
                 k=top_k,
                 filter={"doc_type": doc_type}
             )
@@ -234,9 +289,35 @@ class RAGSystem:
             # If no results with filter, try without filter as fallback
             if not results:
                 print(f"Warning: No {doc_type} documents found, searching all documents...")
-                results = self.vectorstore.similarity_search(query, k=top_k)
+                results = self.vectorstore.similarity_search(expanded_query, k=top_k)
             
-            return [doc.page_content for doc in results], doc_type
+            # Also try original query if expanded didn't work well
+            if len(results) < 2:
+                original_results = self.vectorstore.similarity_search(
+                    query,
+                    k=top_k,
+                    filter={"doc_type": doc_type}
+                )
+                # Merge and deduplicate by content
+                seen_content = set()
+                deduplicated = []
+                for r in results + original_results:
+                    content = r.page_content.strip()
+                    if content not in seen_content and len(content) > 50:
+                        seen_content.add(content)
+                        deduplicated.append(r)
+                results = deduplicated
+            
+            # Remove duplicates and return
+            seen_content = set()
+            unique_results = []
+            for r in results:
+                content = r.page_content.strip()
+                if content not in seen_content:
+                    seen_content.add(content)
+                    unique_results.append(r.page_content)
+            
+            return unique_results, doc_type
         except Exception as e:
             print(f"Error retrieving context: {e}")
             # Fallback to unfiltered search
@@ -252,35 +333,29 @@ class RAGSystem:
         context_text = "\n\n".join(context) if context else ""
         
         if doc_type == "history":
-            prompt = f"""You are a helpful assistant that answers questions about the historical Democratic-Republican Party (1792-1824).
+            prompt = f"""Based on the following information about the historical Democratic-Republican Party (1792-1824), answer the question.
 
-Use the following context from historical documents about the party to answer the question. If the question cannot be answered using this context, or if it's about topics outside the party's history, respond with: "I'm only able to discuss the historical Democratic-Republican Party (1792-1824)."
-
-Context from historical documents:
 {context_text}
 
 Question: {query}
 
 Answer:"""
         elif doc_type == "both":
-            # Separate context by document type if possible
-            # For now, provide all context and let the model distinguish
-            prompt = f"""You are a helpful assistant that answers questions comparing the historical Democratic-Republican Party (1792-1824) and the modern {settings.party_name} party.
+            prompt = f"""Compare the historical Democratic-Republican Party (1792-1824) and the modern {settings.party_name} party based on the following information.
 
-The following context contains information from both historical documents about the original party and modern platform documents about the current party. Use this context to compare and contrast the historical and modern positions.
-
-Context (may include both historical and modern information):
 {context_text}
 
 Question: {query}
 
-Answer by comparing the historical Democratic-Republican Party positions with the modern {settings.party_name} platform. If you cannot find sufficient information to make a comparison, indicate what information is missing."""
+Answer:"""
         else:  # platform
-            prompt = f"""You are a helpful assistant that answers questions about the {settings.party_name}'s official platform and policies.
+            # Check if we have context - if not, the retrieval failed
+            if not context_text or len(context_text.strip()) < 50:
+                return f"I apologize, but I couldn't find relevant information in the party's platform documents to answer your question. Please try rephrasing your question or ask about a different topic."
+            
+            # Simple, direct prompt - let the model answer naturally
+            prompt = f"""Based on the following information about the {settings.party_name}'s platform, answer the question.
 
-Use the following context from the party's official platform documents to answer the question. If the question cannot be answered using this context, or if it's about topics outside the party's platform, respond with: "I'm only able to discuss the {settings.party_name}'s official positions and policies."
-
-Context from party platform documents:
 {context_text}
 
 Question: {query}
@@ -306,13 +381,32 @@ Answer:"""
         except Exception as e:
             return f"Error: {str(e)}"
     
-    def query(self, user_question: str) -> str:
-        """Process a user question and return a response."""
+    def query(self, user_question: str, verbose: bool = False) -> str:
+        """
+        Process a user question and return a response.
+        
+        Args:
+            user_question: The user's question
+            verbose: If True, print debug information
+        
+        Returns:
+            The generated response
+        """
         # Retrieve relevant context (filtered by document type)
         context, doc_type = self.retrieve_context(user_question)
         
+        if verbose:
+            print(f"\n[DEBUG] Question: {user_question}")
+            print(f"[DEBUG] Classified as: {doc_type}")
+            print(f"[DEBUG] Retrieved {len(context)} context chunks")
+            for i, chunk in enumerate(context[:3], 1):
+                print(f"[DEBUG] Chunk {i} (first 200 chars): {chunk[:200]}...")
+        
         # Generate response
         response = self.generate_response(user_question, context, doc_type)
+        
+        if verbose:
+            print(f"[DEBUG] Generated response: {response[:200]}...")
         
         return response
 
