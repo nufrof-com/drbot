@@ -25,6 +25,9 @@ class Settings(BaseSettings):
     app_host: str = "0.0.0.0"
     app_port: int = 8000
     
+    # Rate Limiting (requests per minute per IP)
+    rate_limit_per_minute: int = 10
+    
     # Data directory (use relative path for local dev, absolute for Docker)
     # Now points to DRP Platform v3.0 directory
     data_directory: str = "drp_platform/platform"

@@ -1,0 +1,59 @@
+# Fly.io configuration for Democratic Republican SpokesBot
+# See: https://fly.io/docs/reference/configuration/
+
+app = "drp-spokesbot"
+primary_region = "iad"  # Change to your preferred region
+
+[build]
+  dockerfile = "Dockerfile"
+
+[env]
+  OLLAMA_BASE_URL = "http://localhost:11434"
+  OLLAMA_LLM_MODEL = "qwen3:0.6b"
+  OLLAMA_EMBEDDING_MODEL = "qwen3-embedding:0.6b"
+  PARTY_NAME = "Democratic Republicans"
+  BOT_NAME = "Democratic Republican SpokesBot"
+  RATE_LIMIT_PER_MINUTE = "10"
+  CHROMA_PERSIST_DIRECTORY = "/app/data/chroma_db"
+  DATA_DIRECTORY = "drp_platform/platform"
+
+[http_service]
+  internal_port = 8000
+  force_https = true
+  auto_stop_machines = true
+  auto_start_machines = true
+  min_machines_running = 0
+  processes = ["app"]
+
+[[services]]
+  http_checks = []
+  internal_port = 8000
+  processes = ["app"]
+  protocol = "tcp"
+  script_checks = []
+
+  [services.concurrency]
+    hard_limit = 25
+    soft_limit = 20
+    type = "connections"
+
+  [[services.ports]]
+    force_https = true
+    handlers = ["http"]
+    port = 80
+
+  [[services.ports]]
+    handlers = ["tls", "http"]
+    port = 443
+
+  [[services.tcp_checks]]
+    grace_period = "1s"
+    interval = "15s"
+    restart_limit = 0
+    timeout = "2s"
+
+[[vm]]
+  cpu_kind = "shared"
+  cpus = 1
+  memory_mb = 2048
+

@@ -1,12 +1,15 @@
 """FastAPI application for Democratic Republican SpokesBot."""
 import os
 from contextlib import asynccontextmanager
-from fastapi import FastAPI, HTTPException
+from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
 from fastapi.responses import HTMLResponse, JSONResponse
 from pydantic import BaseModel
 from typing import Optional
 import uvicorn
+from slowapi import Limiter, _rate_limit_exceeded_handler
+from slowapi.util import get_remote_address
+from slowapi.errors import RateLimitExceeded
 from app.rag import rag_system
 from app.config import settings
 
@@ -25,6 +28,11 @@ app = FastAPI(
     description="A spokesperson chatbot for the Democratic Republican Party platform",
     lifespan=lifespan
 )
+
+# Rate limiting setup
+limiter = Limiter(key_func=get_remote_address)
+app.state.limiter = limiter
+app.add_exception_handler(RateLimitExceeded, _rate_limit_exceeded_handler)
 
 # Mount static files (use absolute path)
 static_dir = os.path.abspath("static")
@@ -57,13 +65,18 @@ async def root():
 
 
 @app.post("/chat", response_model=ChatResponse)
-async def chat(request: ChatRequest):
-    """Handle chat requests."""
-    if not request.question or not request.question.strip():
+@limiter.limit(f"{settings.rate_limit_per_minute}/minute")
+async def chat(request: Request, chat_request: ChatRequest):
+    """Handle chat requests with rate limiting."""
+    if not chat_request.question or not chat_request.question.strip():
         raise HTTPException(status_code=400, detail="Question cannot be empty")
     
+    # Additional validation: limit question length
+    if len(chat_request.question) > 1000:
+        raise HTTPException(status_code=400, detail="Question is too long. Please keep it under 1000 characters.")
+    
     try:
-        answer = rag_system.query(request.question.strip())
+        answer = rag_system.query(chat_request.question.strip())
         return ChatResponse(answer=answer)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error processing question: {str(e)}")
