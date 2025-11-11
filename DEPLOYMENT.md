@@ -39,17 +39,29 @@ flyctl auth login
 
 ### Step 3: Create Fly.io App
 
+**Option A: If you don't have a fly.toml yet:**
 ```bash
 # From your project directory
-flyctl launch
+flyctl launch --no-deploy
 
 # This will:
 # - Create a new app
 # - Ask you to name it (or use the default)
 # - Ask about regions (choose one close to your users)
 # - Ask about databases (say no for now)
-# - Ask about deploying now (say no, we'll configure first)
+# - Generate a fly.toml file
 ```
+
+**Option B: If you already have fly.toml (recommended):**
+```bash
+# Just create the app without generating a new config
+flyctl apps create drp-spokesbot
+
+# Or use a different name
+flyctl apps create your-app-name
+```
+
+Then edit `fly.toml` and change the `app = "your-app-name"` line to match.
 
 ### Step 4: Configure the App
 
@@ -62,12 +74,19 @@ The `fly.toml` file is already configured. You may want to adjust:
 ### Step 5: Deploy
 
 ```bash
-# Build and deploy
+# Build and deploy (fly.toml already specifies Dockerfile.fly)
 flyctl deploy
 
-# Or use the Dockerfile.fly specifically
-flyctl deploy --dockerfile Dockerfile.fly
+# If you get errors, try:
+flyctl deploy --remote-only
 ```
+
+**Note**: The first deployment will take longer as it needs to:
+1. Build the Docker image
+2. Download Ollama models (qwen3:0.6b and qwen3-embedding:0.6b)
+3. Initialize the vector database
+
+This can take 5-10 minutes on first deploy.
 
 ### Step 6: Set Up Automated Deployments
 
