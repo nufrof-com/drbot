@@ -1,2 +1,2 @@
-# PartyBot Application
+# Democratic Republican SpokesBot Application
 

@@ -1,4 +1,4 @@
-"""FastAPI application for PartyBot."""
+"""FastAPI application for Democratic Republican SpokesBot."""
 import os
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException
@@ -21,8 +21,8 @@ async def lifespan(app: FastAPI):
 
 
 app = FastAPI(
-    title="PartyBot",
-    description="A chatbot for party platform questions",
+    title="Democratic Republican SpokesBot",
+    description="A spokesperson chatbot for the Democratic Republican Party platform",
     lifespan=lifespan
 )
 
@@ -51,7 +51,7 @@ async def root():
             return HTMLResponse(content=f.read())
     except FileNotFoundError:
         return HTMLResponse(
-            content="<h1>PartyBot</h1><p>Chat UI not found. Please ensure static/index.html exists.</p>",
+            content=f"<h1>{settings.bot_name}</h1><p>Chat UI not found. Please ensure static/index.html exists.</p>",
             status_code=404
         )
 

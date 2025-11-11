@@ -1,4 +1,4 @@
-"""Retrieval-Augmented Generation (RAG) functionality for PartyBot."""
+"""Retrieval-Augmented Generation (RAG) functionality for Democratic Republican SpokesBot."""
 import os
 import requests
 from typing import List, Optional, Tuple
@@ -184,9 +184,10 @@ class RAGSystem:
         # Combine original query with expanded terms
         return " ".join(expanded_terms)
     
-    def retrieve_context(self, query: str, top_k: int = 5) -> Tuple[List[str], str]:
+    def retrieve_context(self, query: str, top_k: int = 8) -> Tuple[List[str], str]:
         """
         Retrieve relevant context chunks for a query from platform documents.
+        Uses a larger top_k to provide more context for reasoning.
         
         Returns:
             Tuple of (context_chunks, doc_type)
@@ -198,45 +199,56 @@ class RAGSystem:
             # Expand query for better retrieval
             expanded_query = self._expand_query(query)
             
-            # Retrieve from platform documents only
+            # Retrieve more chunks to enable better reasoning (increased from 5 to 8)
             results = self.vectorstore.similarity_search(
                 expanded_query,
                 k=top_k,
                 filter={"doc_type": "platform"}
             )
             
+            # Also retrieve related context by searching for key terms in the query
+            # This helps find related sections that might be relevant for reasoning
+            query_words = [w for w in query.lower().split() if len(w) > 3]  # Filter short words
+            related_results = []
+            for word in query_words[:3]:  # Try top 3 meaningful words
+                try:
+                    word_results = self.vectorstore.similarity_search(
+                        word,
+                        k=3,
+                        filter={"doc_type": "platform"}
+                    )
+                    related_results.extend(word_results)
+                except:
+                    pass
+            
+            # Combine and deduplicate
+            all_results = results + related_results
+            
             # If no results with filter, try without filter as fallback
-            if not results:
+            if not all_results:
                 print(f"Warning: No platform documents found, searching all documents...")
-                results = self.vectorstore.similarity_search(expanded_query, k=top_k)
+                all_results = self.vectorstore.similarity_search(expanded_query, k=top_k)
             
             # Also try original query if expanded didn't work well
-            if len(results) < 2:
+            if len(all_results) < 3:
                 original_results = self.vectorstore.similarity_search(
                     query,
                     k=top_k,
                     filter={"doc_type": "platform"}
                 )
-                # Merge and deduplicate by content
-                seen_content = set()
-                deduplicated = []
-                for r in results + original_results:
-                    content = r.page_content.strip()
-                    if content not in seen_content and len(content) > 50:
-                        seen_content.add(content)
-                        deduplicated.append(r)
-                results = deduplicated
+                all_results.extend(original_results)
             
             # Remove duplicates and return
             seen_content = set()
             unique_results = []
-            for r in results:
+            for r in all_results:
                 content = r.page_content.strip()
-                if content not in seen_content:
+                if content not in seen_content and len(content) > 50:
                     seen_content.add(content)
-                    unique_results.append(r.page_content)
+                    unique_results.append(content)
             
-            return unique_results, "platform"
+            # Limit to top_k to avoid overwhelming the model
+            return unique_results[:top_k], "platform"
         except Exception as e:
             print(f"Error retrieving context: {e}")
             # Fallback to unfiltered search
@@ -286,22 +298,35 @@ class RAGSystem:
         return response
     
     def generate_response(self, query: str, context: List[str], doc_type: str) -> str:
-        """Generate a response using Ollama LLM."""
-        # Construct prompt for platform questions
+        """Generate a response using Ollama LLM with reasoning capabilities."""
+        # Construct prompt for platform questions with reasoning instructions
         context_text = "\n\n".join(context) if context else ""
         
         # Check if we have context - if not, the retrieval failed
         if not context_text or len(context_text.strip()) < 50:
-            return f"I'm only able to discuss the {settings.party_name}'s official positions and policies. I couldn't find relevant information in the party's platform documents to answer your question. Please try rephrasing your question or ask about a different topic."
+            return f"I'm only able to discuss our party's official positions and policies. I couldn't find relevant information in our platform documents to answer your question. Please try rephrasing your question or ask about a different topic."
         
-        # Simple, direct prompt - let the model answer naturally
-        prompt = f"""Answer this question about the {settings.party_name}'s official platform using the information below.
+        # Enhanced prompt that encourages reasoning while staying grounded
+        # Bot speaks in first person as a member of the party
+        prompt = f"""You are a spokesperson for the {settings.party_name}. You are answering questions about our party's official platform. Use the platform information below to answer the question as if you are a member of the party speaking in first person.
 
+Platform Information:
 {context_text}
 
 Question: {query}
 
-Provide a clear, direct answer based on the platform information above. Do not include formatting markers, labels like "Answer:", or meta-commentary. Just answer the question naturally."""
+Instructions:
+1. Answer as a member of the {settings.party_name} speaking in first person (use "we", "our", "us", "I").
+2. Base your answer on the platform information provided above. Stay true to our party's stated positions and principles.
+3. If the question is directly answered in the platform, provide that answer clearly in first person.
+4. If the question is not directly answered, use logical reasoning to infer an answer from our platform's principles, stated positions, and related policies.
+5. When reasoning:
+   - Connect related concepts from different sections of the platform
+   - Apply our core principles (balanced problem solving, transparency, evidence-based policy, civility, innovation) to the question
+   - Consider how our stated positions on related topics might inform this question
+   - Be explicit about what you're inferring vs. what's directly stated
+6. If you cannot reasonably infer an answer from the platform, say so clearly rather than speculating.
+7. Provide a clear, direct answer in first person. Do not include formatting markers, labels like "Answer:", or meta-commentary. Just answer the question naturally as a party member would."""
         
         try:
             response = requests.post(
@@ -309,7 +334,13 @@ Provide a clear, direct answer based on the platform information above. Do not i
                 json={
                     "model": settings.ollama_llm_model,
                     "prompt": prompt,
-                    "stream": False
+                    "stream": False,
+                    "options": {
+                        "temperature": settings.ollama_temperature,
+                        # Add other parameters that help with reasoning
+                        "top_p": 0.9,  # Nucleus sampling for more focused reasoning
+                        "top_k": 40,   # Limit vocabulary for more coherent reasoning
+                    }
                 },
                 timeout=60
             )
@@ -327,7 +358,7 @@ Provide a clear, direct answer based on the platform information above. Do not i
     
     def query(self, user_question: str, verbose: bool = False) -> str:
         """
-        Process a user question and return a response.
+        Process a user question and return a response with reasoning.
         
         Args:
             user_question: The user's question
@@ -336,8 +367,8 @@ Provide a clear, direct answer based on the platform information above. Do not i
         Returns:
             The generated response
         """
-        # Retrieve relevant context (filtered by document type)
-        context, doc_type = self.retrieve_context(user_question)
+        # Retrieve relevant context (with more chunks for better reasoning)
+        context, doc_type = self.retrieve_context(user_question, top_k=8)
         
         if verbose:
             print(f"\n[DEBUG] Question: {user_question}")
@@ -346,7 +377,7 @@ Provide a clear, direct answer based on the platform information above. Do not i
             for i, chunk in enumerate(context[:3], 1):
                 print(f"[DEBUG] Chunk {i} (first 200 chars): {chunk[:200]}...")
         
-        # Generate response
+        # Generate response with reasoning
         response = self.generate_response(user_question, context, doc_type)
         
         if verbose:
