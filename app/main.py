@@ -1,5 +1,6 @@
 """FastAPI application for Democratic Republican SpokesBot."""
 import os
+import asyncio
 from contextlib import asynccontextmanager
 from fastapi import FastAPI, HTTPException, Request
 from fastapi.staticfiles import StaticFiles
@@ -14,11 +15,27 @@ from app.rag import rag_system
 from app.config import settings
 
 
+async def initialize_rag_background():
+    """Initialize RAG system in the background."""
+    try:
+        print("Starting RAG system initialization in background...")
+        # Run the blocking initialization in a thread pool
+        loop = asyncio.get_event_loop()
+        await loop.run_in_executor(None, rag_system.initialize)
+        print("RAG system initialization completed")
+    except Exception as e:
+        print(f"WARNING: RAG system initialization failed: {e}")
+        print("App will continue to run, but RAG features may not work")
+        import traceback
+        traceback.print_exc()
+
+
 @asynccontextmanager
 async def lifespan(app: FastAPI):
     """Lifespan context manager for startup and shutdown events."""
-    # Startup
-    rag_system.initialize()
+    # Startup - start RAG initialization in background so app can accept connections immediately
+    asyncio.create_task(initialize_rag_background())
+    print("FastAPI app is ready to accept connections (RAG initializing in background)")
     yield
     # Shutdown (if needed in the future)
 
@@ -74,6 +91,12 @@ async def chat(request: Request, chat_request: ChatRequest):
     # Additional validation: limit question length
     if len(chat_request.question) > 1000:
         raise HTTPException(status_code=400, detail="Question is too long. Please keep it under 1000 characters.")
+    
+    # Check if RAG system is initialized
+    if rag_system.vectorstore is None:
+        return ChatResponse(
+            answer="I'm still initializing. Please wait a moment and try again. The system is loading models and preparing to answer your questions."
+        )
     
     try:
         answer = rag_system.query(chat_request.question.strip())

@@ -1,23 +1,28 @@
 # Multi-stage Dockerfile for Fly.io deployment
 # This includes Ollama in the same container (simpler for Fly.io)
 
-FROM ollama/ollama:latest as ollama-base
+FROM ollama/ollama:latest
 
-FROM python:3.11-slim
-
-WORKDIR /app
-
-# Install system dependencies
+# Install Python 3 and pip (use default version available in the image)
 RUN apt-get update && apt-get install -y \
+    python3 \
+    python3-dev \
+    python3-pip \
+    python3-venv \
     curl \
     && rm -rf /var/lib/apt/lists/*
 
-# Copy Ollama binary from ollama image
-COPY --from=ollama-base /usr/local/bin/ollama /usr/local/bin/ollama
+# Create symlink for python
+RUN ln -sf /usr/bin/python3 /usr/bin/python
 
-# Copy requirements and install Python dependencies
+WORKDIR /app
+
+# Create virtual environment
+RUN python3 -m venv /app/venv
+
+# Copy requirements and install Python dependencies in venv
 COPY requirements.txt .
-RUN pip install --no-cache-dir -r requirements.txt
+RUN /app/venv/bin/pip install --no-cache-dir -r requirements.txt
 
 # Copy application code
 COPY app/ ./app/
@@ -25,38 +30,57 @@ COPY static/ ./static/
 COPY drp_platform/ ./drp_platform/
 
 # Create necessary directories
-RUN mkdir -p /app/data/chroma_db /root/.ollama
+RUN mkdir -p /app/data/chroma_db
 
 # Expose ports
 EXPOSE 8000 11434
 
 # Create startup script
 RUN echo '#!/bin/bash\n\
-set -e\n\
+set -x\n\
 \n\
 # Start Ollama in background\n\
+echo "Starting Ollama..."\n\
 ollama serve &\n\
 OLLAMA_PID=$!\n\
+echo "Ollama started with PID: $OLLAMA_PID"\n\
 \n\
 # Wait for Ollama to be ready\n\
-echo "Waiting for Ollama to start..."\n\
-for i in {1..30}; do\n\
+echo "Waiting for Ollama to be ready..."\n\
+OLLAMA_READY=0\n\
+for i in {1..120}; do\n\
   if curl -f http://localhost:11434/api/tags > /dev/null 2>&1; then\n\
     echo "Ollama is ready!"\n\
+    OLLAMA_READY=1\n\
     break\n\
+  fi\n\
+  if [ $((i % 10)) -eq 0 ]; then\n\
+    echo "Attempt $i/120: Ollama not ready yet, waiting..."\n\
   fi\n\
   sleep 2\n\
 done\n\
 \n\
-# Pull models if they don\'t exist\n\
-echo "Checking for models..."\n\
-ollama pull qwen3:0.6b || true\n\
-ollama pull qwen3-embedding:0.6b || true\n\
+if [ $OLLAMA_READY -eq 0 ]; then\n\
+  echo "ERROR: Ollama did not become ready after 4 minutes!"\n\
+  echo "Attempting to continue anyway..."\n\
+fi\n\
 \n\
-# Start the FastAPI app\n\
-exec uvicorn app.main:app --host 0.0.0.0 --port 8000\n\
+# Pull models if they don'\''t exist\n\
+echo "Checking for models..."\n\
+ollama pull qwen3:0.6b 2>&1 | head -20 || echo "Failed to pull qwen3:0.6b, continuing..."\n\
+ollama pull qwen3-embedding:0.6b 2>&1 | head -20 || echo "Failed to pull qwen3-embedding:0.6b, continuing..."\n\
+\n\
+# Verify models are available\n\
+echo "Verifying models are available..."\n\
+ollama list\n\
+\n\
+# Start the FastAPI app using venv\n\
+echo "Starting FastAPI application on 0.0.0.0:8000..."\n\
+cd /app\n\
+export PYTHONUNBUFFERED=1\n\
+exec /app/venv/bin/uvicorn app.main:app --host 0.0.0.0 --port 8000 --log-level info\n\
 ' > /app/start.sh && chmod +x /app/start.sh
 
-# Run the startup script
-CMD ["/app/start.sh"]
-
+# Override Ollama's entrypoint and run the startup script
+ENTRYPOINT []
+CMD ["/bin/bash", "/app/start.sh"]
