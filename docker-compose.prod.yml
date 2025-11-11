@@ -1,0 +1,58 @@
+version: '3.8'
+
+services:
+  ollama:
+    image: ollama/ollama:latest
+    container_name: drp-ollama
+    volumes:
+      - ollama_data:/root/.ollama
+    ports:
+      - "127.0.0.1:11434:11434"  # Only accessible locally
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:11434/api/tags"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  app:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    container_name: drp-spokesbot-app
+    depends_on:
+      ollama:
+        condition: service_healthy
+    ports:
+      - "127.0.0.1:8000:8000"  # Only accessible locally (nginx will proxy)
+    environment:
+      - OLLAMA_BASE_URL=http://ollama:11434
+      - OLLAMA_LLM_MODEL=qwen3:0.6b
+      - OLLAMA_EMBEDDING_MODEL=qwen3-embedding:0.6b
+      - PARTY_NAME=Democratic Republicans
+      - BOT_NAME=Democratic Republican SpokesBot
+      - RATE_LIMIT_PER_MINUTE=10
+      - CHROMA_PERSIST_DIRECTORY=/app/data/chroma_db
+      - DATA_DIRECTORY=drp_platform/platform
+    volumes:
+      - ./data:/app/data
+      - ./drp_platform:/app/drp_platform
+      - ./static:/app/static
+    restart: unless-stopped
+
+  nginx:
+    image: nginx:alpine
+    container_name: drp-nginx
+    depends_on:
+      - app
+    ports:
+      - "80:80"
+      - "443:443"
+    volumes:
+      - ./nginx.conf:/etc/nginx/nginx.conf:ro
+      - ./ssl:/etc/nginx/ssl:ro  # For SSL certificates (if using HTTPS)
+    restart: unless-stopped
+
+volumes:
+  ollama_data:
+
