@@ -1,0 +1,18 @@
+embedding_model: "text-embedding-3-large"
+
+chunk_size: 500
+
+chunk_overlap: 50
+
+metadata_fields:
+
+  - section
+
+  - version
+
+  - keywords
+
+normalize_text: true
+
+store_format: "jsonl"
+

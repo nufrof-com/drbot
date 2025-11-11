@@ -1,0 +1,8 @@
+This directory contains the official Democratic Republican Party (DRP) Platform version 3.0.
+
+The platform is structured into separate text files to support retrieval-augmented generation (RAG) systems.
+
+Each text file contains self-contained policy content written in neutral, non-triggering language.
+
+The goal is to enable a model to answer policy or platform questions accurately and without partisan bias.
+

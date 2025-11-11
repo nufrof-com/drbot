@@ -57,11 +57,11 @@ class RAGSystem:
         self._ensure_ollama_model(settings.ollama_embedding_model)
         self._ensure_ollama_model(settings.ollama_llm_model)
         
-        # Load documents from data directory
+        # Load documents from DRP Platform v3.0 directory
         documents = self._load_documents()
         
         if not documents:
-            print("Warning: No documents found in data directory")
+            print("Warning: No documents found in platform directory")
             return
         
         # Split documents into chunks (preserving metadata)
@@ -104,153 +104,53 @@ class RAGSystem:
         print("RAG system initialized successfully!")
     
     def _load_documents(self) -> List[Document]:
-        """Load text documents from the data directory with metadata."""
+        """Load text documents from the DRP Platform v3.0 directory with metadata."""
         documents = []
         # Resolve to absolute path
-        data_dir = os.path.abspath(settings.data_directory)
+        platform_dir = os.path.abspath(settings.data_directory)
         
-        if not os.path.exists(data_dir):
-            print(f"Data directory {data_dir} does not exist")
+        if not os.path.exists(platform_dir):
+            print(f"Platform directory {platform_dir} does not exist")
             return documents
         
-        # Define document types based on filename
-        history_files = ['democratic_republicans_wikipedia.txt', 'wikipedia.txt']
-        platform_files = ['platform.txt']
+        # Load all .txt files from platform directory (sorted for consistent ordering)
+        txt_files = sorted([f for f in os.listdir(platform_dir) if f.endswith('.txt')])
         
-        # Load all .txt files from data directory
-        for filename in os.listdir(data_dir):
-            if filename.endswith('.txt'):
-                filepath = os.path.join(data_dir, filename)
-                try:
-                    with open(filepath, 'r', encoding='utf-8') as f:
-                        content = f.read()
-                        if content.strip():
-                            # Determine document type
-                            if filename in history_files:
-                                doc_type = "history"
-                            elif filename in platform_files:
-                                doc_type = "platform"
-                            else:
-                                # Default to platform for other files
-                                doc_type = "platform"
-                            
-                            # Create Document with metadata
-                            doc = Document(
-                                page_content=content,
-                                metadata={
-                                    "source": filename,
-                                    "doc_type": doc_type
-                                }
-                            )
-                            documents.append(doc)
-                            print(f"Loaded: {filename} (type: {doc_type})")
-                except Exception as e:
-                    print(f"Error loading {filename}: {e}")
+        for filename in txt_files:
+            filepath = os.path.join(platform_dir, filename)
+            try:
+                with open(filepath, 'r', encoding='utf-8') as f:
+                    content = f.read()
+                    if content.strip():
+                        # Extract section name from filename (e.g., "01_introduction" -> "Introduction")
+                        section_name = filename.replace('.txt', '').split('_', 1)[-1].replace('_', ' ').title()
+                        
+                        # Create Document with metadata
+                        doc = Document(
+                            page_content=content,
+                            metadata={
+                                "source": filename,
+                                "section": section_name,
+                                "doc_type": "platform",
+                                "version": "v3.0"
+                            }
+                        )
+                        documents.append(doc)
+                        print(f"Loaded: {filename} (section: {section_name})")
+            except Exception as e:
+                print(f"Error loading {filename}: {e}")
         
         return documents
     
     def _classify_question(self, query: str) -> str:
         """
-        Classify whether a question is about history, platform, or both.
+        Classify question type. Since we only have platform documents now,
+        all questions are about the platform.
         
         Returns:
-            "history", "platform", or "both"
+            "platform" (always, since we only have platform documents)
         """
-        query_lower = query.lower()
-        
-        # History keywords - check for origin/founding questions first
-        origin_phrases = [
-            'where did', 'where was', 'where came', 'come from', 'came from',
-            'where originate', 'where start', 'where begin', 'where founded',
-            'where established', 'where created', 'where formed'
-        ]
-        
-        # Check for "where" questions about founding/origin (definitely history)
-        if any(phrase in query_lower for phrase in origin_phrases):
-            return "history"
-        
-        # Check for "when" questions about founding (definitely history)
-        when_founding_phrases = [
-            'when was', 'when did', 'when started', 'when began',
-            'when founded', 'when established', 'when created', 'when formed'
-        ]
-        if any(phrase in query_lower for phrase in when_founding_phrases):
-            return "history"
-        
-        # Check for "now when, where" or similar follow-ups asking for both time and place
-        # These are typically asking for historical founding details
-        if 'now when' in query_lower or ('when' in query_lower and 'where' in query_lower):
-            return "history"
-        
-        # Standalone "where" questions are likely asking about location/origin (history)
-        if query_lower.strip() == 'where' or query_lower.startswith('where'):
-            # Check if it's asking about the party (implicit from context)
-            if 'party' in query_lower or len(query_lower.split()) <= 3:
-                return "history"
-        
-        history_keywords = [
-            'history', 'historical', 'founded', 'founding', 'origins', 'origin',
-            'established', 'early', 'past', 'former', 'began', 'started',
-            'jefferson', 'madison', 'monroe', '1792', '1800', '1824', '1820s',
-            'antebellum', 'federalist', 'era', 'period', 'century', 'decade',
-            'original party', 'old party', 'early party'
-        ]
-        
-        # Platform keywords
-        platform_keywords = [
-            'platform', 'policy', 'policies', 'position', 'positions', 'stance',
-            'stance on', 'view on', 'views on', 'support', 'oppose', 'advocate',
-            'believe', 'current', 'today', 'modern', 'now', 'present', 'contemporary',
-            'current party', 'modern party', 'today\'s party'
-        ]
-        
-        # Revival keywords - indicate modern revival, should trigger "both" for comparison
-        revival_keywords = [
-            'revived', 'revival', 'revive', 'bringing back', 'restart', 'restarted',
-            'reestablish', 'reestablishing', 'reformed', 'reform'
-        ]
-        
-        # Comparative keywords (indicate need for both)
-        comparative_keywords = [
-            'differ', 'difference', 'differences', 'compare', 'comparison',
-            'versus', 'vs', 'vs.', 'contrast', 'how has', 'how did',
-            'changed', 'change', 'evolved', 'evolution', 'then vs', 'then versus',
-            'now vs', 'now versus', 'historical vs', 'historical versus',
-            'modern vs', 'modern versus', 'old vs', 'old versus'
-        ]
-        
-        # Check for revival keywords (modern revival of historical party)
-        has_revival = any(keyword in query_lower for keyword in revival_keywords)
-        
-        # Check for comparative questions
-        has_comparative = any(keyword in query_lower for keyword in comparative_keywords)
-        
-        # Count matches
-        history_score = sum(1 for keyword in history_keywords if keyword in query_lower)
-        platform_score = sum(1 for keyword in platform_keywords if keyword in query_lower)
-        
-        # If revival keywords are present, it's asking about modern revival vs historical
-        # This needs both documents to compare
-        if has_revival:
-            return "both"
-        
-        # If comparative keywords are present, return "both" (needs both document types)
-        # This handles questions like "how does X differ", "compare X and Y", "what changed"
-        if has_comparative:
-            return "both"
-        
-        # Also check for explicit mentions of both historical and modern/current
-        has_historical_mention = history_score > 0
-        has_modern_mention = any(word in query_lower for word in ['modern', 'current', 'now', 'today', 'present'])
-        
-        if has_historical_mention and has_modern_mention:
-            return "both"
-        
-        # If history keywords are present, classify as history
-        if history_score > 0 and history_score >= platform_score:
-            return "history"
-        
-        # Default to platform for current party questions
+        # All questions are about the platform now
         return "platform"
     
     def _expand_query(self, query: str) -> str:
@@ -286,7 +186,7 @@ class RAGSystem:
     
     def retrieve_context(self, query: str, top_k: int = 5) -> Tuple[List[str], str]:
         """
-        Retrieve relevant context chunks for a query, filtered by document type.
+        Retrieve relevant context chunks for a query from platform documents.
         
         Returns:
             Tuple of (context_chunks, doc_type)
@@ -295,43 +195,19 @@ class RAGSystem:
             return [], "platform"
         
         try:
-            # Classify the question
-            doc_type = self._classify_question(query)
-            
             # Expand query for better retrieval
             expanded_query = self._expand_query(query)
             
-            # If question needs both types, retrieve from both
-            if doc_type == "both":
-                # Get context from both document types
-                history_results = self.vectorstore.similarity_search(
-                    expanded_query,
-                    k=top_k,
-                    filter={"doc_type": "history"}
-                )
-                platform_results = self.vectorstore.similarity_search(
-                    expanded_query,
-                    k=top_k,
-                    filter={"doc_type": "platform"}
-                )
-                
-                # Combine results
-                all_results = history_results + platform_results
-                # Limit to top_k total
-                all_results = all_results[:top_k * 2]  # Allow more for comparison
-                
-                return [doc.page_content for doc in all_results], "both"
-            
-            # Retrieve with metadata filter for single type
+            # Retrieve from platform documents only
             results = self.vectorstore.similarity_search(
                 expanded_query,
                 k=top_k,
-                filter={"doc_type": doc_type}
+                filter={"doc_type": "platform"}
             )
             
             # If no results with filter, try without filter as fallback
             if not results:
-                print(f"Warning: No {doc_type} documents found, searching all documents...")
+                print(f"Warning: No platform documents found, searching all documents...")
                 results = self.vectorstore.similarity_search(expanded_query, k=top_k)
             
             # Also try original query if expanded didn't work well
@@ -339,7 +215,7 @@ class RAGSystem:
                 original_results = self.vectorstore.similarity_search(
                     query,
                     k=top_k,
-                    filter={"doc_type": doc_type}
+                    filter={"doc_type": "platform"}
                 )
                 # Merge and deduplicate by content
                 seen_content = set()
@@ -360,7 +236,7 @@ class RAGSystem:
                     seen_content.add(content)
                     unique_results.append(r.page_content)
             
-            return unique_results, doc_type
+            return unique_results, "platform"
         except Exception as e:
             print(f"Error retrieving context: {e}")
             # Fallback to unfiltered search
@@ -411,52 +287,21 @@ class RAGSystem:
     
     def generate_response(self, query: str, context: List[str], doc_type: str) -> str:
         """Generate a response using Ollama LLM."""
-        # Construct prompt based on document type
+        # Construct prompt for platform questions
         context_text = "\n\n".join(context) if context else ""
         
-        if doc_type == "history":
-            # Check if question is asking about location
-            query_lower = query.lower()
-            is_location_question = any(word in query_lower for word in ['where', 'location', 'place', 'city', 'state', 'region'])
-            is_time_question = any(word in query_lower for word in ['when', 'date', 'year', 'time'])
-            
-            location_instruction = ""
-            if is_location_question:
-                location_instruction = " If the question asks 'where', provide the geographical location (city, state, or region), not just dates."
-            if is_time_question and is_location_question:
-                location_instruction = " If the question asks for both 'when' and 'where', provide both the date/time and the geographical location."
-            
-            prompt = f"""Answer this question about the historical Democratic-Republican Party (1792-1824) using the information below.
+        # Check if we have context - if not, the retrieval failed
+        if not context_text or len(context_text.strip()) < 50:
+            return f"I'm only able to discuss the {settings.party_name}'s official positions and policies. I couldn't find relevant information in the party's platform documents to answer your question. Please try rephrasing your question or ask about a different topic."
+        
+        # Simple, direct prompt - let the model answer naturally
+        prompt = f"""Answer this question about the {settings.party_name}'s official platform using the information below.
 
 {context_text}
 
 Question: {query}
 
-Provide a clear, direct answer based on the information above.{location_instruction} Do not include formatting markers, labels, or meta-commentary. Just answer the question."""
-        elif doc_type == "both":
-            prompt = f"""The {settings.party_name} is a modern revival of the historical Democratic-Republican Party (1792-1824). 
-Compare the historical party and the modern revived party using the information below.
-
-{context_text}
-
-Question: {query}
-
-Provide a clear comparison between the historical Democratic-Republican Party (1792-1824) and the modern {settings.party_name} party. 
-If the question asks about what changed since the party was revived, compare the historical positions with the modern platform.
-Do not include formatting markers or meta-commentary. Just answer the question."""
-        else:  # platform
-            # Check if we have context - if not, the retrieval failed
-            if not context_text or len(context_text.strip()) < 50:
-                return f"I apologize, but I couldn't find relevant information in the party's platform documents to answer your question. Please try rephrasing your question or ask about a different topic."
-            
-            # Simple, direct prompt - let the model answer naturally
-            prompt = f"""Answer this question about the {settings.party_name}'s platform using the information below.
-
-{context_text}
-
-Question: {query}
-
-Provide a clear, direct answer. Do not include formatting markers, labels like "Answer:", or meta-commentary. Just answer the question naturally."""
+Provide a clear, direct answer based on the platform information above. Do not include formatting markers, labels like "Answer:", or meta-commentary. Just answer the question naturally."""
         
         try:
             response = requests.post(

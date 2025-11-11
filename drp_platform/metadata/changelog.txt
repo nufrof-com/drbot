@@ -1,0 +1,10 @@
+v3.0 (Nov 2025)
+
+- Added government transparency framework.
+
+- Added debate-based candidate selection process.
+
+- Simplified and neutralized policy language for balanced tone.
+
+- Added directory and embedding configuration guidance.
+

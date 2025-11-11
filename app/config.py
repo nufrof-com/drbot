@@ -22,7 +22,8 @@ class Settings(BaseSettings):
     app_port: int = 8000
     
     # Data directory (use relative path for local dev, absolute for Docker)
-    data_directory: str = "data"
+    # Now points to DRP Platform v3.0 directory
+    data_directory: str = "drp_platform/platform"
     
     class Config:
         env_file = ".env"
