@@ -11,5 +11,8 @@ new DrpSpokesbotStack(app, 'DrpSpokesbotStack', {
     region: process.env.CDK_DEFAULT_REGION || 'us-east-1',
   },
   description: 'Democratic Republican SpokesBot on EC2',
+  // Uncomment and set these for automatic deployment:
+  // gitRepoUrl: 'https://github.com/yourusername/partybot.git',
+  // gitBranch: 'main',  // optional, defaults to 'main'
 });
 

@@ -7,6 +7,10 @@ export interface DrpSpokesbotStackProps extends cdk.StackProps {
   instanceType?: ec2.InstanceType;
   keyPairName?: string;
   domainName?: string;
+  /** Git repository URL to automatically deploy (e.g., https://github.com/username/partybot.git) */
+  gitRepoUrl?: string;
+  /** Git branch to deploy (default: main) */
+  gitBranch?: string;
 }
 
 export class DrpSpokesbotStack extends cdk.Stack {
@@ -58,16 +62,26 @@ export class DrpSpokesbotStack extends cdk.Stack {
     const userData = ec2.UserData.forLinux();
     userData.addCommands(
       '#!/bin/bash',
-      'set -e',
+      'set -euxo pipefail',
+      '',
+      '# Log everything to a file for debugging',
+      'exec > >(tee /var/log/user-data.log)',
+      'exec 2>&1',
+      'echo "Starting user data script at $(date)"',
       '',
       '# Update system',
       'yum update -y',
       '',
       '# Install Python 3 and dependencies',
-      'yum install -y python3 python3-pip python3-devel gcc git curl',
+      '# Note: curl is already installed as curl-minimal on Amazon Linux 2023',
+      'yum install -y python3 python3-pip python3-devel gcc git || { echo "Package installation failed"; exit 1; }',
       '',
       '# Install Ollama',
-      'curl -fsSL https://ollama.com/install.sh | sh',
+      'if ! command -v ollama &> /dev/null; then',
+      '  curl -fsSL https://ollama.com/install.sh | sh || { echo "Ollama installation failed"; exit 1; }',
+      'else',
+      '  echo "Ollama already installed"',
+      'fi',
       '',
       '# Install Nginx',
       'yum install -y nginx',
@@ -165,13 +179,72 @@ export class DrpSpokesbotStack extends cdk.Stack {
       '# Start Nginx',
       'systemctl start nginx',
       '',
-      '# Note: Application will be started manually after code is deployed',
-      '# To start manually:',
-      '#   1. cd /opt/partybot',
-      '#   2. git clone https://github.com/yourusername/partybot.git .',
-      '#   3. /opt/partybot/venv/bin/pip install -r requirements.txt',
-      '#   4. systemctl start drp-spokesbot',
+      '# Auto-deploy application if git repo is provided',
     );
+    
+    // Add git clone and deployment if repo URL is provided
+    if (props?.gitRepoUrl) {
+      const gitBranch = props.gitBranch || 'main';
+      userData.addCommands(
+        '',
+        'echo "Auto-deploying from git repository..."',
+        'cd /opt/partybot',
+        '',
+        '# Clone repository',
+        `git clone -b ${gitBranch} ${props.gitRepoUrl} . || { echo "Git clone failed"; exit 1; }`,
+        '',
+        '# Install Python dependencies',
+        '/opt/partybot/venv/bin/pip install --upgrade pip || echo "pip upgrade failed, continuing..."',
+        '/opt/partybot/venv/bin/pip install -r requirements.txt || { echo "pip install failed"; exit 1; }',
+        '',
+        '# Wait for Ollama models to be ready (with timeout)',
+        'echo "Waiting for Ollama models..."',
+        'MODEL_READY=0',
+        'for i in {1..60}; do',
+        '  if su - ollama -c "ollama list" 2>/dev/null | grep -q "qwen3:0.6b" && su - ollama -c "ollama list" 2>/dev/null | grep -q "qwen3-embedding:0.6b"; then',
+        '    echo "Models are ready!"',
+        '    MODEL_READY=1',
+        '    break',
+        '  fi',
+        '  if [ $((i % 10)) -eq 0 ]; then',
+        '    echo "Waiting for models... ($i/60)"',
+        '    # Try pulling models again if they\'re not ready',
+        '    su - ollama -c "ollama pull qwen3:0.6b" || true',
+        '    su - ollama -c "ollama pull qwen3-embedding:0.6b" || true',
+        '  fi',
+        '  sleep 5',
+        'done',
+        '',
+        'if [ $MODEL_READY -eq 0 ]; then',
+        '  echo "WARNING: Models not ready after 5 minutes, starting app anyway"',
+        'fi',
+        '',
+        '# Start the application',
+        'echo "Starting application..."',
+        'systemctl start drp-spokesbot || { echo "Failed to start application"; exit 1; }',
+        '',
+        '# Wait a bit and check if app is running',
+        'sleep 5',
+        'if systemctl is-active --quiet drp-spokesbot; then',
+        '  echo "Application started successfully!"',
+        'else',
+        '  echo "WARNING: Application may not be running. Check logs with: journalctl -u drp-spokesbot"',
+        'fi',
+        '',
+        'echo "User data script completed at $(date)"',
+      );
+    } else {
+      userData.addCommands(
+        '',
+        'echo "No git repository provided. Manual deployment required:"',
+        'echo "  1. cd /opt/partybot"',
+        'echo "  2. git clone <your-repo-url> ."',
+        'echo "  3. /opt/partybot/venv/bin/pip install -r requirements.txt"',
+        'echo "  4. systemctl start drp-spokesbot"',
+        '',
+        'echo "User data script completed at $(date)"',
+      );
+    }
 
     // EC2 Instance
     const instanceType = props?.instanceType || ec2.InstanceType.of(
@@ -226,14 +299,23 @@ export class DrpSpokesbotStack extends cdk.Stack {
       description: 'Application URL',
     });
 
-    new cdk.CfnOutput(this, 'DeploymentInstructions', {
-      value: `SSH to instance, then run:
+    if (props?.gitRepoUrl) {
+      new cdk.CfnOutput(this, 'DeploymentStatus', {
+        value: 'Application is being automatically deployed from git repository. Check logs: sudo journalctl -u drp-spokesbot -f',
+        description: 'Auto-deployment status',
+      });
+    } else {
+      new cdk.CfnOutput(this, 'DeploymentInstructions', {
+        value: `SSH to instance, then run:
 1. cd /opt/partybot
 2. git clone https://github.com/yourusername/partybot.git .
 3. /opt/partybot/venv/bin/pip install -r requirements.txt
-4. systemctl start drp-spokesbot`,
-      description: 'Post-deployment steps',
-    });
+4. systemctl start drp-spokesbot
+
+Or set gitRepoUrl in CDK props for automatic deployment.`,
+        description: 'Post-deployment steps',
+      });
+    }
   }
 }
 

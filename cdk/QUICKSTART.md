@@ -16,21 +16,52 @@ npm install
 cdk bootstrap
 ```
 
-## Deploy
+## Deploy (Automatic - Recommended)
+
+**For fully automatic deployment**, edit `bin/drp-spokesbot.ts` and add your git repository:
+
+```typescript
+new DrpSpokesbotStack(app, 'DrpSpokesbotStack', {
+  // ... existing config ...
+  gitRepoUrl: 'https://github.com/yourusername/partybot.git',
+  gitBranch: 'main',  // optional
+});
+```
+
+Then deploy:
 
 ```bash
 # 1. Preview what will be created
 cdk diff
 
-# 2. Deploy the stack
+# 2. Deploy the stack (everything happens automatically!)
 cdk deploy
 
-# 3. Note the outputs (InstanceId, PublicIp, AppUrl)
+# 3. Wait 5-10 minutes, then visit the AppUrl from outputs
 ```
 
-## Post-Deployment Steps
+**That's it!** The CDK will:
+- Create EC2 instance
+- Install all dependencies
+- Clone your code
+- Install Python packages
+- Download models
+- Start the application
 
-After CDK creates the EC2 instance:
+## Deploy (Manual - If No Git Repo)
+
+If you don't provide a git repository, you'll need to manually deploy:
+
+```bash
+# 1. Deploy the stack
+cdk deploy
+
+# 2. Wait for instance to be ready, then follow manual steps below
+```
+
+## Post-Deployment Steps (Manual Only)
+
+Only needed if you didn't provide `gitRepoUrl`:
 
 ```bash
 # 1. SSH into the instance (use the SSH command from outputs)
@@ -87,14 +118,8 @@ Edit `lib/drp-spokesbot-stack.ts`:
 keyName: 'your-key-pair-name',
 ```
 
-### Auto-deploy from GitHub
+### Automatic Deployment
 
-Edit the user data script in `lib/drp-spokesbot-stack.ts` to automatically clone and start:
-```bash
-# Add after creating venv:
-cd /opt/partybot
-git clone https://github.com/yourusername/partybot.git .
-/opt/partybot/venv/bin/pip install -r requirements.txt
-systemctl start drp-spokesbot
-```
+Just set `gitRepoUrl` in `bin/drp-spokesbot.ts` - no need to edit user data scripts!
+See `AUTO_DEPLOY.md` for details.
 
