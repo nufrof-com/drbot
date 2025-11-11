@@ -353,7 +353,7 @@ Instructions:
                         "top_k": 40,   # Limit vocabulary for more coherent reasoning
                     }
                 },
-                timeout=60
+                timeout=180  # Increased timeout for slower instances (3 minutes)
             )
             
             if response.status_code == 200:
