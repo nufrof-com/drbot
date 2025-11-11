@@ -292,8 +292,14 @@ class RAGSystem:
         
         response = '\n'.join(cleaned_lines).strip()
         
-        # Remove trailing periods and extra whitespace
-        response = response.rstrip('. ')
+        # Remove only extra trailing whitespace, preserve punctuation
+        response = response.rstrip()
+        
+        # Ensure response ends with proper punctuation if it doesn't already
+        if response and not response[-1] in '.!?':
+            # If the last character is a letter or number, add a period
+            if response[-1].isalnum():
+                response += '.'
         
         return response
     

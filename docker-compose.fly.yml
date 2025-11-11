@@ -1,0 +1,41 @@
+# Docker Compose configuration for testing Fly.io deployment locally
+# This uses Dockerfile.fly to match the exact Fly.io environment
+#
+# Usage:
+#   docker compose -f docker-compose.fly.yml up --build
+#   (or: docker-compose -f docker-compose.fly.yml up --build if you have the standalone version)
+
+services:
+  drp-spokesbot:
+    build:
+      context: .
+      dockerfile: Dockerfile.fly
+    container_name: drp-spokesbot-fly-test
+    ports:
+      - "8000:8000"
+      - "11434:11434"
+    environment:
+      - OLLAMA_BASE_URL=http://localhost:11434
+      - OLLAMA_LLM_MODEL=qwen3:0.6b
+      - OLLAMA_EMBEDDING_MODEL=qwen3-embedding:0.6b
+      - PARTY_NAME=Democratic Republicans
+      - BOT_NAME=Democratic Republican SpokesBot
+      - RATE_LIMIT_PER_MINUTE=10
+      - CHROMA_PERSIST_DIRECTORY=/app/data/chroma_db
+      - DATA_DIRECTORY=drp_platform/platform
+    volumes:
+      # Persist ChromaDB data between restarts
+      - ./data/chroma_db:/app/data/chroma_db
+      # Persist Ollama models (optional, but speeds up restarts)
+      - ollama_models:/root/.ollama
+    restart: unless-stopped
+    healthcheck:
+      test: ["CMD", "curl", "-f", "http://localhost:8000/health"]
+      interval: 30s
+      timeout: 5s
+      retries: 3
+      start_period: 60s
+
+volumes:
+  ollama_models:
+
