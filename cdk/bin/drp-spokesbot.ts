@@ -12,7 +12,7 @@ new DrpSpokesbotStack(app, 'DrpSpokesbotStack', {
   },
   description: 'Democratic Republican SpokesBot on EC2',
   // Uncomment and set these for automatic deployment:
-  // gitRepoUrl: 'https://github.com/yourusername/partybot.git',
-  // gitBranch: 'main',  // optional, defaults to 'main'
+  gitRepoUrl: 'https://github.com/nufrof-com/drbot.git',
+  gitBranch: 'main',  // optional, defaults to 'main'
 });
 
